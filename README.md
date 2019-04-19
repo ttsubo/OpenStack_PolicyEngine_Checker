@@ -3,7 +3,7 @@ OpenStack基盤における権限設定/判定処理として、"oslo.policy"パ
 https://github.com/openstack/oslo.policy
 
 "policy.json"の挙動をオフラインで確認するツールです.
-なお、諸般の事象で、OpenStack基盤(Mitaka版)での動作を想定しております.
+なお、ここでは、OpenStack基盤(Stein版)での動作を想定しております.
 
 ## ◼️ OpenStack基盤(heat)での、処理概要
 OpenStack heatは、リクエストに応じて、適切なクラウドオペレーション（novaインスタンス作成など）を行います。
@@ -16,47 +16,67 @@ OpenStack heatは、リクエストに応じて、適切なクラウドオペレ
 ![scope](images/Heat_architecture.png)
 
 ## ◼️ heat-api内部での権限判定の流れ
-heatスタックを作成する場合だと、[StackControllerクラスのcreateメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/stacks.py#L382-L401)が起動される.
+heatスタックを作成する場合だと、[StackControllerクラスのcreateメソッド](https://github.com/openstack/heat/blob/stable/stein/heat/api/openstack/v1/stacks.py#L398-L418)が起動される.
 
-- [デコレータ"@util.policy_enforce"](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/util.py#L21-L40)が起動される.
-- [req.context.policy.enforce](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/util.py#L33-L35)が起動される.
-- ちなみに、[req.context.policy](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/context.py#L104)の実態は、[policy.Enforceクラス](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/policy.py#L35-L88)である.
-- [enforceメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/policy.py#L69-L80)の中身は、こんな感じ.
+- [デコレータ"@util.registered_policy_enforce"](https://github.com/openstack/heat/blob/stable/stein/heat/api/openstack/v1/util.py#L32-L40)が起動される.
+- [_policy_enforce"](https://github.com/openstack/heat/blob/stable/stein/heat/api/openstack/v1/util.py#L43-L57)が起動される.
+- [req.context.policy.enforce](https://github.com/openstack/heat/blob/stable/stein/heat/api/openstack/v1/util.py#L48-L52)が起動される.
+- ちなみに、[req.context.policy](https://github.com/openstack/heat/blob/stable/stein/heat/common/context.py#L117)の実態は、[policy.get_enforcer()](https://github.com/openstack/heat/blob/stable/stein/heat/common/context.py#L117)の戻り値、すなわち、[policy.Enforceクラス](https://github.com/openstack/heat/blob/stable/stein/heat/common/policy.py#L40-L118)である.
+- [enforceメソッド](https://github.com/openstack/heat/blob/stable/stein/heat/common/policy.py#L92-L106)の中身は、こんな感じ.
 ```python
-def enforce(self, context, action, scope=None, target=None):
+def enforce(self, context, action, scope=None, target=None,
+            is_registered_policy=False):
     """Verifies that the action is valid on the target in this context.
        :param context: Heat request context
        :param action: String representing the action to be checked
        :param target: Dictionary representing the object of the action.
-       :raises: self.exc (defaults to heat.common.exception.Forbidden)
+       :raises heat.common.exception.Forbidden: When permission is denied
+               (or self.exc if supplied).
        :returns: A non-False value if access is allowed.
     """
     _action = '%s:%s' % (scope or self.scope, action)
     _target = target or {}
-    return self._check(context, _action, _target, self.exc, action=action)
+    return self._check(context, _action, _target, self.exc, action=action,
+                       is_registered_policy=is_registered_policy)
 ```
-- 続いて、[_checkメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/policy.py#L55-L67)が起動されます.
+- 続いて、[_checkメソッド](https://github.com/openstack/heat/blob/stable/stein/heat/common/policy.py#L64-L90)が起動されます.
 - _checkメソッドの中身は、こんな感じ.
 ```python
-def _check(self, context, rule, target, exc, *args, **kwargs):
+def _check(self, context, rule, target, exc,
+           is_registered_policy=False, *args, **kwargs):
     """Verifies that the action is valid on the target in this context.
        :param context: Heat request context
        :param rule: String representing the action to be checked
        :param target: Dictionary representing the object of the action.
-       :raises: self.exc (defaults to heat.common.exception.Forbidden)
+       :raises heat.common.exception.Forbidden: When permission is denied
+               (or self.exc if supplied).
        :returns: A non-False value if access is allowed.
     """
     do_raise = False if not exc else True
-    credentials = context.to_dict()
-    return self.enforcer.enforce(rule, target, credentials,
-                                 do_raise, exc=exc, *args, **kwargs)
+    credentials = context.to_policy_values()
+    if is_registered_policy:
+        try:
+            return self.enforcer.authorize(rule, target, credentials,
+                                           do_raise=do_raise,
+                                           exc=exc, action=rule)
+        except policy.PolicyNotRegistered:
+            if self.log_not_registered:
+                with excutils.save_and_reraise_exception():
+                    LOG.exception(_('Policy not registered.'))
+            else:
+                raise
+    else:
+        return self.enforcer.enforce(rule, target, credentials,
+                                     do_raise, exc=exc, *args, **kwargs)
 ```
-- "oslo.policy"パッケージで定義された[Enforcerクラスのenforceメソッド](https://github.com/openstack/oslo.policy/blob/mitaka-eol/oslo_policy/policy.py#L515-L564)が起動される.
+- "oslo.policy"パッケージで定義された[Enforcerクラスのenforceメソッド](https://github.com/openstack/oslo.policy/blob/stable/stein/oslo_policy/policy.py#L819-L975)が起動される.
 - このあと、"policy.json"の権限設定とコンテキスト情報を比較判定する.
-- 判定結果"allowed"が、"True"の場合には、[createメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/util.py#L33-L38)が起動される.
+- 判定結果"allowed"が、"True"の場合には、[createメソッド](https://github.com/openstack/heat/blob/stable/stein/heat/api/openstack/v1/util.py#L48-L55)が起動される.
 
 ## ◼️ Policy Engine疑似体験ツールの概要
 コンテキスト情報を事前にサンプルとして準備しておいて、Policy Engineを呼び出して、権限判定の結果をオフラインで確認するツールになります.
+ちなみに、コンテキスト情報の入手は、OpenStack(Mitaka版)の環境を使用して取得しました.
+従って、厳密に、Stein版OpenStack Policy Engineを模擬していない可能性があります.
 
 
 ### (1) ツール環境整備
@@ -69,14 +89,14 @@ $ docker run -it offline_policy_checker bash
 ### (2) 起動してみる
 dockerコンテナを起動して、OpenStack権限設定/判定処理を疑似体験してみましょう.
 
-#### (2-1) Heat(Mitaka版)での権限設定/判定処理の疑似体験
+#### (2-1) Heat(Stein版)での権限設定/判定処理の疑似体験
 - まずは、シンプルに疑似体験ツールを起動してみます.
 
 ```
-root@48bb11d7bcd8:~# cd heat_mitaka/
+root@48bb11d7bcd8:~# cd heat_stein
 ```
 ```
-root@48bb11d7bcd8:~/heat_mitaka# python offline_policy_checker.py
+root@119108a5b344:~/heat_stein# python offline_policy_checker.py
 ------------------------------------------------------------
 Checking result: action=[create], allowed=[True]
 ------------------------------------------------------------
@@ -84,7 +104,7 @@ Checking result: action=[create], allowed=[True]
 - 続いて、事前に準備したコンテキスト情報の内容を確認しつつ、"index"アクション時の権限設定/判定処理を確認します.
 
 ```
-root@48bb11d7bcd8:~/heat_mitaka# python offline_policy_checker.py --action index --debug
+root@119108a5b344:~/heat_stein# python offline_policy_checker.py --action index --debug
 {
     "username": null,
     "project_domain_id": "default",
@@ -145,15 +165,15 @@ Checking result: action=[index], allowed=[True]
 ------------------------------------------------------------
 ```
 
-#### (2-2) Nova(Mitaka版)でのPolicy権限設定/判定処理の疑似体験
+#### (2-2) Nova(Stein版)でのPolicy権限設定/判定処理の疑似体験
 
 - こちらも、まずは、シンプルに疑似体験ツールを起動してみます.
 
 ```
-root@cb6eb5d264fd:~# cd nova_mitaka
+root@119108a5b344:~# cd nova_stein
 ```
 ```
-root@cb6eb5d264fd:~/nova_mitaka# python offline_policy_checker.py
+root@119108a5b344:~/nova_stein# python offline_policy_checker.py
 ------------------------------------------------------------
 Checking result: action=[reboot], result=[True]
 ------------------------------------------------------------
@@ -161,20 +181,18 @@ Checking result: action=[reboot], result=[True]
 - 続いて、事前に準備したコンテキスト情報の内容を確認しつつ、"attach_interface"アクション時の権限設定/判定処理を確認します.
 
 ```
-root@cb6eb5d264fd:~/nova_mitaka# python offline_policy_checker.py --action attach_interface --debug
+root@119108a5b344:~/nova_stein# python offline_policy_checker.py --action attach_interface --debug
 {
     "project_name": null,
-    "remote_address": null,
-    "quota_class": null,
-    "is_admin": true,
-    "service_catalog": [],
-    "read_deleted": "no",
     "user_id": null,
-    "roles": [],
+    "quota_class": null,
+    "service_catalog": [],
     "request_id": "req-27a1a9c7-5eed-492f-983f-94778ad9dec8",
-    "instance_lock_checked": false,
+    "is_admin": true,
     "project_id": null,
-    "user_name": null
+    "user_name": null,
+    "remote_address": null,
+    "read_deleted": "no"
 }
 ------------------------------------------------------------
 Checking result: action=[attach_interface], result=[True]

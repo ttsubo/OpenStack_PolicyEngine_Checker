@@ -11,5 +11,5 @@ COPY . /root
 RUN python get-pip.py \
  && pip install -r requirements.txt
 
-COPY heat_mitaka/policy.json /etc/heat/
-COPY nova_mitaka/policy.json /etc/nova/
+COPY heat_stein/policy.json /etc/heat/
+COPY nova_stein/policy.json /etc/nova/
