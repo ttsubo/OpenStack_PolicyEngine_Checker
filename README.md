@@ -73,10 +73,10 @@ dockerコンテナを起動して、OpenStack権限設定/判定処理を疑似�
 - まずは、シンプルに疑似体験ツールを起動してみます.
 
 ```
-root@48bb11d7bcd8:~# cd heat_mitaka/
+root@a32d926e0ebc:~# cd heat_mitaka/
 ```
 ```
-root@48bb11d7bcd8:~/heat_mitaka# python offline_policy_checker.py
+root@a32d926e0ebc:~/heat_mitaka# python offline_policy_checker.py
 ------------------------------------------------------------
 Checking result: action=[create], allowed=[True]
 ------------------------------------------------------------
@@ -84,7 +84,7 @@ Checking result: action=[create], allowed=[True]
 - 続いて、事前に準備したコンテキスト情報の内容を確認しつつ、"index"アクション時の権限設定/判定処理を確認します.
 
 ```
-root@48bb11d7bcd8:~/heat_mitaka# python offline_policy_checker.py --action index --debug
+root@a32d926e0ebc:~/heat_mitaka# python offline_policy_checker.py --action index --debug
 {
     "username": null,
     "project_domain_id": "default",
@@ -150,10 +150,10 @@ Checking result: action=[index], allowed=[True]
 - こちらも、まずは、シンプルに疑似体験ツールを起動してみます.
 
 ```
-root@cb6eb5d264fd:~# cd nova_mitaka
+root@a32d926e0ebc:~# cd nova_mitaka
 ```
 ```
-root@cb6eb5d264fd:~/nova_mitaka# python offline_policy_checker.py
+root@a32d926e0ebc:~/nova_mitaka# python offline_policy_checker.py
 ------------------------------------------------------------
 Checking result: action=[reboot], result=[True]
 ------------------------------------------------------------
@@ -161,22 +161,168 @@ Checking result: action=[reboot], result=[True]
 - 続いて、事前に準備したコンテキスト情報の内容を確認しつつ、"attach_interface"アクション時の権限設定/判定処理を確認します.
 
 ```
-root@cb6eb5d264fd:~/nova_mitaka# python offline_policy_checker.py --action attach_interface --debug
+root@a32d926e0ebc:~/nova_mitaka# python offline_policy_checker.py --action attach_interface --debug
 {
-    "project_name": null,
-    "remote_address": null,
-    "quota_class": null,
-    "is_admin": true,
-    "service_catalog": [],
-    "read_deleted": "no",
-    "user_id": null,
-    "roles": [],
-    "request_id": "req-27a1a9c7-5eed-492f-983f-94778ad9dec8",
-    "instance_lock_checked": false,
-    "project_id": null,
+    "project_name": null, 
+    "remote_address": null, 
+    "quota_class": null, 
+    "is_admin": true, 
+    "service_catalog": [], 
+    "read_deleted": "no", 
+    "user_id": null, 
+    "roles": [], 
+    "request_id": "req-27a1a9c7-5eed-492f-983f-94778ad9dec8", 
+    "instance_lock_checked": false, 
+    "project_id": null, 
     "user_name": null
 }
 ------------------------------------------------------------
 Checking result: action=[attach_interface], result=[True]
 ------------------------------------------------------------
+```
+
+## ◼️ oslopolicy-checkerを活用した"policy.json"の動作確認
+"oslo.policy"では、[oslopolicy-checker](https://docs.openstack.org/oslo.policy/latest/cli/index.html#oslopolicy-checker)コマンドが提供されているようです.
+先程、使用したコンテキスト情報を活用して、"oslopolicy-checker"の動作を確認しておきます.
+
+### (1) JSONファイルの事前準備
+コンテキスト情報ファイルを、JSON形式に変換しておきます.
+"oslopolicy-checker"コマンドが要求するJSON形式は、コンテキスト情報の"auth_token_info"エレメントのみを抽出したものです.
+そこで、お手軽に変換ツールで使用して、JSONファイルを準備しておきます.
+
+```
+root@a32d926e0ebc:~/heat_mitaka# python convert_sample_context.py 
+{
+    "token": {
+        "methods": [
+            "password", 
+            "token"
+        ], 
+        "roles": [
+            {
+                "id": "9fe2ff9ee4384b1894a90878d3e92bab", 
+                "name": "_member_"
+            }, 
+            {
+                "id": "502393bd5c2845b191146c41f5413cb7", 
+                "name": "heat_stack_owner"
+            }
+        ], 
+        "auth_token": "2004d1801bb645cf91b015c2a97579ed", 
+        "expires_at": "2019-04-18T09:35:33.000000Z", 
+        "project": {
+            "domain": {
+                "id": "default", 
+                "name": "Default"
+            }, 
+            "id": "30f8255b1c10422daa5fcf9f08e12243", 
+            "name": "demo"
+        }, 
+
+... (snip)
+
+        "version": "v3", 
+        "user": {
+            "domain": {
+                "id": "default", 
+                "name": "Default"
+            }, 
+            "id": "8880f4a4bee844f48d93fa2d3c9a0b1b", 
+            "name": "demo"
+        }, 
+        "audit_ids": [
+            "ZWIamF_DQmW4_h-hBa-KLQ"
+        ], 
+        "issued_at": "2019-04-18T08:35:33.000000Z"
+    }
+}
+```
+"sample_json.txt”ファイルが生成されました.
+
+```
+root@a32d926e0ebc:~/heat_mitaka# ls -l|grep sample_json.txt
+-rw-r--r-- 1 root root 18075 Apr 23 00:26 sample_json.txt
+```
+
+### (2) "oslopolicy-checker"コマンドの実行
+"oslopolicy-checker"コマンドを起動すると、policy権限許可の判定結果が確認できます.
+
+```
+root@a32d926e0ebc:~/heat_mitaka# oslopolicy-checker \
+> --policy policy.json \
+> --access sample_json.txt
+passed: cloudwatch:DisableAlarmActions
+passed: stacks:list_resource_types
+passed: stacks:resource_schema
+passed: stacks:update_patch
+passed: cloudwatch:ListMetrics
+passed: cloudwatch:SetAlarmState
+passed: stacks:list_template_functions
+passed: stacks:validate_template
+passed: software_configs:create
+passed: events:show
+passed: software_deployments:update
+passed: cloudformation:EstimateTemplateCost
+passed: software_deployments:metadata
+passed: stacks:generate_template
+passed: actions:action
+passed: stacks:list_snapshots
+passed: cloudformation:ListStackResources
+passed: cloudwatch:PutMetricAlarm
+passed: cloudwatch:DescribeAlarmHistory
+passed: software_deployments:delete
+passed: stacks:show_snapshot
+passed: software_configs:show
+passed: stacks:index
+passed: cloudformation:CancelUpdateStack
+passed: stacks:create
+passed: cloudformation:DescribeStacks
+passed: stacks:snapshot
+passed: resource:mark_unhealthy
+passed: stacks:lookup
+passed: resource:signal
+passed: stacks:preview
+passed: cloudwatch:DescribeAlarms
+passed: software_deployments:show
+passed: cloudwatch:DeleteAlarms
+passed: cloudformation:UpdateStack
+passed: cloudformation:DeleteStack
+passed: cloudwatch:EnableAlarmActions
+passed: cloudformation:ListStacks
+passed: software_configs:delete
+passed: stacks:restore_snapshot
+passed: cloudformation:DescribeStackResources
+passed: stacks:abandon
+passed: events:index
+passed: software_deployments:index
+passed: cloudformation:DescribeStackResource
+failed: software_configs:global_index
+passed: stacks:detail
+passed: stacks:preview_update_patch
+passed: stacks:template
+passed: resource:metadata
+passed: cloudformation:DescribeStackEvents
+passed: cloudformation:GetTemplate
+passed: stacks:preview_update
+passed: stacks:delete_snapshot
+failed: resource_types:OS::Nova::Flavor
+failed: stacks:global_index
+failed: service:index
+passed: stacks:delete
+passed: cloudformation:CreateStack
+passed: stacks:list_template_versions
+passed: resource:show
+passed: software_configs:index
+passed: stacks:export
+passed: cloudformation:ValidateTemplate
+passed: stacks:show
+passed: resource:index
+passed: software_deployments:create
+passed: cloudwatch:GetMetricStatistics
+passed: stacks:update
+passed: cloudwatch:PutMetricData
+passed: cloudwatch:DescribeAlarmsForMetric
+passed: build_info:build_info
+passed: stacks:show_output
+passed: stacks:list_outputs
 ```
