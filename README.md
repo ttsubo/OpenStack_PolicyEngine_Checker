@@ -2,8 +2,7 @@
 OpenStack基盤における権限設定/判定処理として、"oslo.policy"パッケージが活用されています.
 https://github.com/openstack/oslo.policy
 
-"policy.json"の挙動をオフラインで確認するツールです.
-なお、諸般の事象で、OpenStack基盤(Mitaka版)での動作を想定しております.
+"policy.json"の挙動をオフラインで確認するツールです. なお、ここでは、OpenStack基盤(Rocky版)での動作を想定しております.
 
 ## ◼️ OpenStack基盤(heat)での、処理概要
 OpenStack heatは、リクエストに応じて、適切なクラウドオペレーション（novaインスタンス作成など）を行います。
@@ -16,47 +15,69 @@ OpenStack heatは、リクエストに応じて、適切なクラウドオペレ
 ![scope](images/Heat_architecture.png)
 
 ## ◼️ heat-api内部での権限判定の流れ
-heatスタックを作成する場合だと、[StackControllerクラスのcreateメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/stacks.py#L382-L401)が起動される.
+heatスタックを作成する場合だと、[StackControllerクラスのcreateメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/stacks.py#L398-L418)が起動される.
 
-- [デコレータ"@util.policy_enforce"](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/util.py#L21-L40)が起動される.
-- [req.context.policy.enforce](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/util.py#L33-L35)が起動される.
-- ちなみに、[req.context.policy](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/context.py#L104)の実態は、[policy.Enforceクラス](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/policy.py#L35-L88)である.
-- [enforceメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/policy.py#L69-L80)の中身は、こんな感じ.
+- [デコレータ"@util.policy_enforce"](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L32-L40)が起動される.
+- [_policy_enforce"](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L43-L57)が起動される.
+- [req.context.policy.enforce](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L48-L52)が起動される.
+- ちなみに、[req.context.policy](https://github.com/openstack/heat/blob/stable/rocky/heat/common/context.py#L117)の実態は、
+[policy.get_enforcer()](https://github.com/openstack/heat/blob/stable/rocky/heat/common/context.py#L117)の戻り値、すなわち、[policy.Enforceクラス](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L40-L118)である.
+- [enforceメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L92-L106)の中身は、こんな感じ.
 ```python
-def enforce(self, context, action, scope=None, target=None):
+def enforce(self, context, action, scope=None, target=None,
+            is_registered_policy=False):
     """Verifies that the action is valid on the target in this context.
+
        :param context: Heat request context
        :param action: String representing the action to be checked
        :param target: Dictionary representing the object of the action.
-       :raises: self.exc (defaults to heat.common.exception.Forbidden)
+       :raises heat.common.exception.Forbidden: When permission is denied
+               (or self.exc if supplied).
        :returns: A non-False value if access is allowed.
     """
     _action = '%s:%s' % (scope or self.scope, action)
     _target = target or {}
-    return self._check(context, _action, _target, self.exc, action=action)
+    return self._check(context, _action, _target, self.exc, action=action,
+                       is_registered_policy=is_registered_policy)
 ```
-- 続いて、[_checkメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/common/policy.py#L55-L67)が起動されます.
+- 続いて、[_checkメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L64-L90)が起動されます.
 - _checkメソッドの中身は、こんな感じ.
 ```python
-def _check(self, context, rule, target, exc, *args, **kwargs):
+def _check(self, context, rule, target, exc,
+           is_registered_policy=False, *args, **kwargs):
     """Verifies that the action is valid on the target in this context.
+
        :param context: Heat request context
        :param rule: String representing the action to be checked
        :param target: Dictionary representing the object of the action.
-       :raises: self.exc (defaults to heat.common.exception.Forbidden)
+       :raises heat.common.exception.Forbidden: When permission is denied
+               (or self.exc if supplied).
        :returns: A non-False value if access is allowed.
     """
     do_raise = False if not exc else True
-    credentials = context.to_dict()
-    return self.enforcer.enforce(rule, target, credentials,
-                                 do_raise, exc=exc, *args, **kwargs)
+    credentials = context.to_policy_values()
+    if is_registered_policy:
+        try:
+            return self.enforcer.authorize(rule, target, credentials,
+                                           do_raise=do_raise,
+                                           exc=exc, action=rule)
+        except policy.PolicyNotRegistered:
+            if self.log_not_registered:
+                with excutils.save_and_reraise_exception():
+                    LOG.exception(_('Policy not registered.'))
+            else:
+                raise
+    else:
+        return self.enforcer.enforce(rule, target, credentials,
+                                     do_raise, exc=exc, *args, **kwargs)
 ```
-- "oslo.policy"パッケージで定義された[Enforcerクラスのenforceメソッド](https://github.com/openstack/oslo.policy/blob/mitaka-eol/oslo_policy/policy.py#L515-L564)が起動される.
+- "oslo.policy"パッケージで定義された[Enforcerクラスのenforceメソッド](https://github.com/openstack/oslo.policy/blob/stable/rocky/oslo_policy/policy.py#L792-L913)が起動される.
 - このあと、"policy.json"の権限設定とコンテキスト情報を比較判定する.
-- 判定結果"allowed"が、"True"の場合には、[createメソッド](https://github.com/openstack/heat/blob/mitaka-eol/heat/api/openstack/v1/util.py#L33-L38)が起動される.
+- 判定結果"allowed"が、"True"の場合には、[createメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L48-L55)が起動される.
 
 ## ◼️ Policy Engine疑似体験ツールの概要
 コンテキスト情報を事前にサンプルとして準備しておいて、Policy Engineを呼び出して、権限判定の結果をオフラインで確認するツールになります.
+ちなみに、コンテキスト情報の入手は、OpenStack(Rocky版)の環境を使用して取得しました.
 
 
 ### (1) ツール環境整備
@@ -69,14 +90,14 @@ $ docker run -it offline_policy_checker bash
 ### (2) 起動してみる
 dockerコンテナを起動して、OpenStack権限設定/判定処理を疑似体験してみましょう.
 
-#### (2-1) Heat(Mitaka版)での権限設定/判定処理の疑似体験
+#### (2-1) Heat(Rocky版)での権限設定/判定処理の疑似体験
 - まずは、シンプルに疑似体験ツールを起動してみます.
 
 ```
-root@a32d926e0ebc:~# cd heat_mitaka/
+root@71073d4e0d8c:~# cd heat_rocky
 ```
 ```
-root@a32d926e0ebc:~/heat_mitaka# python offline_policy_checker.py
+root@71073d4e0d8c:~/heat_rocky# python offline_policy_checker.py
 ------------------------------------------------------------
 Checking result: action=[create], allowed=[True]
 ------------------------------------------------------------
@@ -84,76 +105,77 @@ Checking result: action=[create], allowed=[True]
 - 続いて、事前に準備したコンテキスト情報の内容を確認しつつ、"index"アクション時の権限設定/判定処理を確認します.
 
 ```
-root@a32d926e0ebc:~/heat_mitaka# python offline_policy_checker.py --action index --debug
+root@71073d4e0d8c:~/heat_rocky# python offline_policy_checker.py --action index --debug
 {
-    "username": null,
-    "project_domain_id": "default",
-    "user_id": "8880f4a4bee844f48d93fa2d3c9a0b1b",
-    "show_deleted": false,
+    "username": null, 
+    "global_request_id": null, 
+    "project_name": null, 
+    "user_id": "999e3b9a1f3f4b52ba4c085efb0e6d73", 
+    "show_deleted": false, 
     "roles": [
-        "_member_",
+        "_member_", 
         "heat_stack_owner"
-    ],
-    "user_identity": "8880f4a4bee844f48d93fa2d3c9a0b1b 30f8255b1c10422daa5fcf9f08e12243",
-    "tenant_id": "30f8255b1c10422daa5fcf9f08e12243",
-    "auth_token": "2004d1801bb645cf91b015c2a97579ed",
-    "user_domain_id": "default",
+    ], 
+    "user_identity": "999e3b9a1f3f4b52ba4c085efb0e6d73 f2de30617f9d4ac495035a6cf44ad7b9", 
+    "project_domain": "default", 
+    "auth_token": "gAAAAABcx5yqci7MnCOKPV3xKPaE4fETwRR8Jy0LOSik9isFlgYBvxr4ZwIdT2SCV1lzXe_b0zg1YCaIHoIbjnd9Blx1Xc8t_muFPjf4B_KX--Uggd7GgankSHU9jLYMS_ctgOi3G3FrfZ5ISfijR-wxt3CSy4Svwj0DMJbzLWlPQRmkapE8b1U", 
+    "user_domain": "default", 
     "auth_token_info": {
         "token": {
+            "is_domain": false, 
             "methods": [
-                "password",
-                "token"
-            ],
+                "password"
+            ], 
             "roles": [
                 {
-                    "id": "9fe2ff9ee4384b1894a90878d3e92bab",
+                    "id": "9fe2ff9ee4384b1894a90878d3e92bab", 
                     "name": "_member_"
-                },
+                }, 
                 {
-                    "id": "502393bd5c2845b191146c41f5413cb7",
+                    "id": "5db01c05664b48e3adad1508d5045695", 
                     "name": "heat_stack_owner"
                 }
-            ],
-            "auth_token": "2004d1801bb645cf91b015c2a97579ed",
-            "expires_at": "2019-04-18T09:35:33.000000Z",
+            ], 
+            "auth_token": "gAAAAABcx5yqci7MnCOKPV3xKPaE4fETwRR8Jy0LOSik9isFlgYBvxr4ZwIdT2SCV1lzXe_b0zg1YCaIHoIbjnd9Blx1Xc8t_muFPjf4B_KX--Uggd7GgankSHU9jLYMS_ctgOi3G3FrfZ5ISfijR-wxt3CSy4Svwj0DMJbzLWlPQRmkapE8b1U", 
+            "expires_at": "2019-04-30T01:54:02.000000Z", 
             "project": {
                 "domain": {
-                    "id": "default",
+                    "id": "default", 
                     "name": "Default"
-                },
-                "id": "30f8255b1c10422daa5fcf9f08e12243",
+                }, 
+                "id": "f2de30617f9d4ac495035a6cf44ad7b9", 
                 "name": "demo"
             },
 
 ... (snip)
 
         }
-    },
-    "auth_url": "http://10.79.5.191:35357/v3/",
-    "trust_id": null,
-    "request_id": "req-943e2a8c-845f-4c62-bddb-dc83374e526a",
-    "is_admin": false,
-    "trustor_user_id": null,
-    "password": null,
-    "aws_creds": null,
-    "region_name": null,
-    "tenant": "demo",
-    "user": null
+    }, 
+    "project_id": null, 
+    "auth_url": "http://192.168.100.201:5000/v3/", 
+    "user": null, 
+    "request_id": "req-0c39c326-76b9-48b5-800b-2dc448ad78ed", 
+    "is_admin": false, 
+    "trustor_user_id": null, 
+    "password": null, 
+    "aws_creds": null, 
+    "trust_id": null, 
+    "region_name": null
 }
 ------------------------------------------------------------
 Checking result: action=[index], allowed=[True]
 ------------------------------------------------------------
 ```
 
-#### (2-2) Nova(Mitaka版)でのPolicy権限設定/判定処理の疑似体験
+#### (2-2) Nova(Rocky版)でのPolicy権限設定/判定処理の疑似体験
 
 - こちらも、まずは、シンプルに疑似体験ツールを起動してみます.
 
 ```
-root@a32d926e0ebc:~# cd nova_mitaka
+root@71073d4e0d8c:~# cd nova_rocky 
 ```
 ```
-root@a32d926e0ebc:~/nova_mitaka# python offline_policy_checker.py
+root@71073d4e0d8c:~/nova_rocky# python offline_policy_checker.py
 ------------------------------------------------------------
 Checking result: action=[reboot], result=[True]
 ------------------------------------------------------------
@@ -161,20 +183,18 @@ Checking result: action=[reboot], result=[True]
 - 続いて、事前に準備したコンテキスト情報の内容を確認しつつ、"attach_interface"アクション時の権限設定/判定処理を確認します.
 
 ```
-root@a32d926e0ebc:~/nova_mitaka# python offline_policy_checker.py --action attach_interface --debug
+root@71073d4e0d8c:~/nova_rocky# python offline_policy_checker.py --action attach_interface --debug
 {
     "project_name": null, 
-    "remote_address": null, 
-    "quota_class": null, 
-    "is_admin": true, 
-    "service_catalog": [], 
-    "read_deleted": "no", 
     "user_id": null, 
-    "roles": [], 
-    "request_id": "req-27a1a9c7-5eed-492f-983f-94778ad9dec8", 
-    "instance_lock_checked": false, 
+    "quota_class": null, 
+    "service_catalog": [], 
+    "request_id": "req-244e45fd-521c-4f66-9924-0f5484744526", 
+    "is_admin": true, 
     "project_id": null, 
-    "user_name": null
+    "user_name": null, 
+    "remote_address": null, 
+    "read_deleted": "no"
 }
 ------------------------------------------------------------
 Checking result: action=[attach_interface], result=[True]
@@ -191,12 +211,12 @@ Checking result: action=[attach_interface], result=[True]
 そこで、お手軽に変換ツールで使用して、JSONファイルを準備しておきます.
 
 ```
-root@a32d926e0ebc:~/heat_mitaka# python convert_sample_context.py 
+root@71073d4e0d8c:~/heat_rocky# python convert_sample_context.py
 {
     "token": {
+        "is_domain": false, 
         "methods": [
-            "password", 
-            "token"
+            "password"
         ], 
         "roles": [
             {
@@ -204,20 +224,20 @@ root@a32d926e0ebc:~/heat_mitaka# python convert_sample_context.py
                 "name": "_member_"
             }, 
             {
-                "id": "502393bd5c2845b191146c41f5413cb7", 
+                "id": "5db01c05664b48e3adad1508d5045695", 
                 "name": "heat_stack_owner"
             }
         ], 
-        "auth_token": "2004d1801bb645cf91b015c2a97579ed", 
-        "expires_at": "2019-04-18T09:35:33.000000Z", 
+        "auth_token": "gAAAAABcx5yqci7MnCOKPV3xKPaE4fETwRR8Jy0LOSik9isFlgYBvxr4ZwIdT2SCV1lzXe_b0zg1YCaIHoIbjnd9Blx1Xc8t_muFPjf4B_KX--Uggd7GgankSHU9jLYMS_ctgOi3G3FrfZ5ISfijR-wxt3CSy4Svwj0DMJbzLWlPQRmkapE8b1U", 
+        "expires_at": "2019-04-30T01:54:02.000000Z", 
         "project": {
             "domain": {
                 "id": "default", 
                 "name": "Default"
             }, 
-            "id": "30f8255b1c10422daa5fcf9f08e12243", 
+            "id": "f2de30617f9d4ac495035a6cf44ad7b9", 
             "name": "demo"
-        }, 
+        },
 
 ... (snip)
 
@@ -227,28 +247,29 @@ root@a32d926e0ebc:~/heat_mitaka# python convert_sample_context.py
                 "id": "default", 
                 "name": "Default"
             }, 
-            "id": "8880f4a4bee844f48d93fa2d3c9a0b1b", 
-            "name": "demo"
+            "id": "999e3b9a1f3f4b52ba4c085efb0e6d73", 
+            "name": "demo", 
+            "password_expires_at": null
         }, 
         "audit_ids": [
-            "ZWIamF_DQmW4_h-hBa-KLQ"
+            "wc9FiJOUR0CV09Bej5wZ0w"
         ], 
-        "issued_at": "2019-04-18T08:35:33.000000Z"
+        "issued_at": "2019-04-30T00:54:02.000000Z"
     }
 }
 ```
 "sample_json.txt”ファイルが生成されました.
 
 ```
-root@a32d926e0ebc:~/heat_mitaka# ls -l|grep sample_json.txt
--rw-r--r-- 1 root root 18075 Apr 23 00:26 sample_json.txt
+root@71073d4e0d8c:~/heat_rocky# ls -l|grep sample_json.txt
+-rw-r--r-- 1 root root 18466 Apr 30 01:33 sample_json.txt
 ```
 
 ### (2) "oslopolicy-checker"コマンドの実行
 "oslopolicy-checker"コマンドを起動すると、policy権限許可の判定結果が確認できます.
 
 ```
-root@a32d926e0ebc:~/heat_mitaka# oslopolicy-checker \
+root@71073d4e0d8c:~/heat_rocky# oslopolicy-checker \
 > --policy policy.json \
 > --access sample_json.txt
 passed: cloudwatch:DisableAlarmActions

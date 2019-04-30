@@ -1,2 +1,2 @@
-oslo.config==3.9.0
-oslo.policy==1.6.0
+oslo.config==6.6.0
+oslo.policy==1.39.0
