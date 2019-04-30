@@ -13,8 +13,8 @@ class RequestContext(object):
             "user_id": self.context["user_id"],
             "password": self.context["password"],
             "aws_creds": self.context["aws_creds"],
-            "tenant": self.context["tenant"],
-            "tenant_id": self.context["tenant_id"],
+            "project_name": self.context["project_name"] if self.context.has_key("project_name") else None,
+            "project_id": self.context["project_id"] if self.context.has_key("project_id") else None,
             "trust_id": self.context["trust_id"],
             "trustor_user_id": self.context["trustor_user_id"],
             "auth_token_info": self.context["auth_token_info"],
@@ -23,11 +23,12 @@ class RequestContext(object):
             "is_admin": self.context["is_admin"],
             "user": self.context["user"],
             "request_id": self.context["request_id"],
+            "global_request_id": self.context["global_request_id"],
             "show_deleted": self.context["show_deleted"],
             "region_name": self.context["region_name"],
             "user_identity": self.context["user_identity"],
-            "user_domain_id": self.context["user_domain_id"],
-            "project_domain_id": self.context["project_domain_id"],
+            "user_domain": self.context["user_domain"],
+            "project_domain": self.context["project_domain"],
         }
 
 def convert(context):

@@ -29,14 +29,12 @@ class RequestContext(object):
             "project_id": self.context["project_id"],
             "is_admin": self.context["is_admin"],
             "read_deleted": self.context["read_deleted"],
-            "roles": self.context["roles"],
             "remote_address": self.context["remote_address"],
             "request_id": self.context["request_id"],
             "quota_class": self.context["quota_class"],
             "user_name": self.context["user_name"],
             "service_catalog": self.context["service_catalog"],
             "project_name": self.context["project_name"],
-            "instance_lock_checked": self.context["instance_lock_checked"],
         }
 
 def init(policy_file=None, rules=None, default_rule=None, use_conf=True):
@@ -58,6 +56,9 @@ def enforce(context, action, target, exc=None):
     try:
         result = _ENFORCER.enforce(action, target, credentials,
                                    do_raise=False, exc=exc, action=action)
+    except PolicyNotRegistered:
+        print('Policy not registered')
+        result = False
     except Exception:
         print('Policy check for %(action)s failed with credentials '
               '%(credentials)s',
