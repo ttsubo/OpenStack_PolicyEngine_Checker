@@ -20,9 +20,9 @@ heatスタックを作成する場合だと、[StackControllerクラスのcreate
 - [デコレータ"@util.policy_enforce"](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L32-L40)が起動される.
 - [_policy_enforce"](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L43-L57)が起動される.
 - [req.context.policy.enforce](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L48-L52)が起動される.
-- ちなみに、[req.context.policy](https://github.com/openstack/heat/blob/stable/rocky/heat/common/context.py#L117)の実態は、
-[policy.get_enforcer()](https://github.com/openstack/heat/blob/stable/rocky/heat/common/context.py#L117)の戻り値、すなわち、[policy.Enforceクラス](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L40-L118)である.
-- [enforceメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L92-L106)の中身は、こんな感じ.
+- ちなみに、[req.context.policy](https://github.com/openstack/heat/blob/stable/rocky/heat/common/context.py#L128)の実態は、
+[policy.get_enforcer()](https://github.com/openstack/heat/blob/stable/rocky/heat/common/context.py#L128)の戻り値、すなわち、[policy.Enforceクラス](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L40-L120)である.
+- [enforceメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L94-L108)の中身は、こんな感じ.
 ```python
 def enforce(self, context, action, scope=None, target=None,
             is_registered_policy=False):
@@ -40,7 +40,7 @@ def enforce(self, context, action, scope=None, target=None,
     return self._check(context, _action, _target, self.exc, action=action,
                        is_registered_policy=is_registered_policy)
 ```
-- 続いて、[_checkメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L64-L90)が起動されます.
+- 続いて、[_checkメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/common/policy.py#L66-L92)が起動されます.
 - _checkメソッドの中身は、こんな感じ.
 ```python
 def _check(self, context, rule, target, exc,
@@ -71,7 +71,7 @@ def _check(self, context, rule, target, exc,
         return self.enforcer.enforce(rule, target, credentials,
                                      do_raise, exc=exc, *args, **kwargs)
 ```
-- "oslo.policy"パッケージで定義された[Enforcerクラスのenforceメソッド](https://github.com/openstack/oslo.policy/blob/stable/rocky/oslo_policy/policy.py#L792-L913)が起動される.
+- "oslo.policy"パッケージで定義された[Enforcerクラスのenforceメソッド](https://github.com/openstack/oslo.policy/blob/stable/rocky/oslo_policy/policy.py#L819-L940)が起動される.
 - このあと、"policy.json"の権限設定とコンテキスト情報を比較判定する.
 - 判定結果"allowed"が、"True"の場合には、[createメソッド](https://github.com/openstack/heat/blob/stable/rocky/heat/api/openstack/v1/util.py#L48-L55)が起動される.
 
